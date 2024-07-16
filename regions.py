@@ -7,13 +7,13 @@ import community
 import array
 import numbers
 import warnings
+import igraph as ig
 
 from shapely.ops import polygonize_full, polygonize, unary_union
 from shapely.geometry import Point, LineString, Polygon, MultiPolygon, mapping, MultiLineString
 from shapely.ops import cascaded_union, linemerge, nearest_points
-pd.set_option("precision", 10)
 
-def reset_index_dual_gdfsIG(nodesDual_gdf, edgesDual_gdf):
+def reset_index_dual(nodesDual_gdf, edgesDual_gdf):
     '''
     The function simply reset the indexes of the two dataframes.
      
@@ -41,6 +41,7 @@ def reset_index_dual_gdfsIG(nodesDual_gdf, edgesDual_gdf):
     edgesDual_gdf = edgesDual_gdf.rename(columns = {'IG_edgeID' : 'u'})
     edgesDual_gdf = pd.merge(edgesDual_gdf, nodesDual_gdf[['edgeID', 'IG_edgeID']], how='left', left_on='old_v', right_on='edgeID')
     edgesDual_gdf = edgesDual_gdf.rename(columns = {'IG_edgeID' : 'v'})
+    
     edgesDual_gdf.drop(['edgeID_x', 'edgeID_y', 'old_u', 'old_v'], inplace = True, axis = 1)
     
     nodesDual_gdf.index = nodesDual_gdf['IG_edgeID']
@@ -48,7 +49,7 @@ def reset_index_dual_gdfsIG(nodesDual_gdf, edgesDual_gdf):
     
     return nodesDual_gdf, edgesDual_gdf
     
-def reset_index_gdfsIG(nodes_gdf, edges_gdf):
+def reset_index_gdfs(nodes_gdf, edges_gdf):
     '''
     The function simply reset the indexes of the two dataframes.
      
@@ -70,10 +71,11 @@ def reset_index_gdfsIG(nodes_gdf, edges_gdf):
     edges_gdf['u'], edges_gdf['v'] = edges_gdf['u'].astype(int), edges_gdf['v'].astype(int)
     nodes_gdf['IG_nodeID'] = nodes_gdf.index.values.astype(int)
     nodes_gdf['nodeID'] = nodes_gdf['nodeID'].astype(int)
+    
     edges_gdf = edges_gdf.rename(columns = {'u':'old_u', 'v':'old_v'})
-    edges_gdf = pd.merge(edges_gdf, nodes_gdf[['nodeID', 'IG_nodeID']], how='left', left_on='old_u', right_on=label_index)
+    edges_gdf = pd.merge(edges_gdf, nodes_gdf[['nodeID', 'IG_nodeID']], how='left', left_on='old_u', right_on='nodeID')
     edges_gdf = edges_gdf.rename(columns = {'IG_nodeID' : 'u'})
-    edges_gdf = pd.merge(edges_gdf, nodes_gdf[['nodeID','IG_nodeID']], how='left', left_on='old_v', right_on=label_index)
+    edges_gdf = pd.merge(edges_gdf, nodes_gdf[['nodeID','IG_nodeID']], how='left', left_on='old_v', right_on='nodeID')
     edges_gdf = edges_gdf.rename(columns = {'IG_nodeID': 'v'})
     edges_gdf.drop(['nodeID_x', 'nodeID_y', 'old_u', 'old_v'], inplace = True, axis = 1)
     
@@ -81,9 +83,7 @@ def reset_index_gdfsIG(nodes_gdf, edges_gdf):
     nodes_gdf.index.name = None
     return nodes_gdf, edges_gdf    
     
-
 def dual_graphIG_fromGDF(nodes_dual, edges_dual):
-
     '''
     The function generates a NetworkX graph from dual-nodes and -edges GeoDataFrames.
             
@@ -106,8 +106,8 @@ def dual_graphIG_fromGDF(nodes_dual, edges_dual):
     Dg.add_nodes_from(nodes_dual.index)
     attributes = nodes_dual.to_dict()
     
-    a = (nodes_dual.applymap(type) == list).sum()
-    if len(a[a>0]): 
+    a = (nodes_dual.drop(columns='geometry').applymap(type) == list).sum()
+    if len(a[a>0]) > 0: 
         to_ignore = a[a>0].index[0]
     else: to_ignore = []
     
@@ -122,13 +122,11 @@ def dual_graphIG_fromGDF(nodes_dual, edges_dual):
     # separately) or null
     for _, row in edges_dual.iterrows():
         attrs = {}
-        for label, value in row.iteritems():
+        for label, value in row.items():
             if (label not in ['u', 'v']) and (isinstance(value, list) or pd.notnull(value)):
                 attrs[label] = value
         Dg.add_edge(row['u'], row['v'], **attrs)
-
     return Dg
-    ## polygonise
     
 def weight_nodes_gdf(nodes_gdf, service_points_gdf, list_amenities, field, radius = 50):
     """
@@ -193,3 +191,14 @@ def polygonise_clusters(points_gdf, partition_field, crs):
     df = pd.DataFrame(d)
     partitions_polygonised = gpd.GeoDataFrame(df, crs=crs, geometry=df['geometry'])
     return partitions_polygonised
+    
+def from_nx_to_igraph(graph, weight):
+   
+    # Convert the NetworkX graph to an igraph object
+    graph_int = nx.convert_node_labels_to_integers(graph)
+    ig_graph = ig.Graph()
+    ig_graph.add_vertices(list(graph_int.nodes()))
+    ig_graph.add_edges(list(graph_int.edges()))
+    ig_graph.es['weight'] = list(nx.get_edge_attributes(graph_int, weight).values())
+
+    return ig_graph
